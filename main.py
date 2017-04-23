@@ -1,0 +1,73 @@
+import numpy as np
+import cv2
+import glob
+import random
+
+fnames = []
+for i in range(26):
+    for fname in glob.glob('chars/{}/*.jpg'.format(chr(ord('a') + i))):
+        fnames.append((i, fname))
+random.shuffle(fnames)
+fnames_train = fnames[1400:]
+fnames_test = fnames[:1400]
+
+def read_img(path):
+    img = cv2.imread(path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, gaus = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return gaus
+
+sift = cv2.SIFT()
+BOW = cv2.BOWKMeansTrainer(26)
+for (i, fname) in fnames_train:
+    gray = read_img(fname)
+    kp, des = sift.detectAndCompute(gray, None)
+    if len(kp) > 0:
+        BOW.add(des)
+    else:
+        fnames_train.remove((i, fname))
+
+dictionary = BOW.cluster()
+
+desc_ext = cv2.DescriptorExtractor_create("SIFT")
+bow_img_ext = cv2.BOWImgDescriptorExtractor(desc_ext, cv2.BFMatcher(cv2.NORM_L2))
+bow_img_ext.setVocabulary(dictionary)
+
+def feature_extract(path):
+    gray = read_img(path)
+    return bow_img_ext.compute(gray, sift.detect(gray))
+
+train_desc = []
+train_labels = []
+
+for (i, fname) in fnames_train:
+    desc = feature_extract(fname)
+    if desc != None:
+        train_desc.extend(desc)
+        train_labels.append(i)
+
+svm = cv2.SVM()
+svm.train(np.array(train_desc), np.array(train_labels))
+knn = cv2.KNearest(np.array(train_desc), np.array(train_labels))
+correct = 0
+wrong = 0
+knn_correct = 0
+knn_wrong = 0
+for (i,fname) in fnames_test:
+    desc = feature_extract(fname)
+    if desc != None:
+        p, _, _, _ = knn.find_nearest(desc, 5)
+        if p == i:
+            knn_correct += 1
+        else:
+            knn_wrong += 1
+        c = svm.predict(desc)
+        if c == i:
+            correct += 1
+        else:
+            wrong += 1
+
+print 'Correct {}'.format(correct)
+print 'Wrong {}'.format(wrong)
+print 'KNNCorrect {}'.format(knn_correct)
+print 'KNNWrong {}'.format(knn_wrong)
