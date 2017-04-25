@@ -1,24 +1,26 @@
 import numpy as np
 import cv2
 import glob
-import random
 
-fnames = []
+fnames_train = []
+fnames_test = []
 for i in range(26):
-    for fname in glob.glob('chars/{}/*.jpg'.format(chr(ord('a') + i))):
-        fnames.append((i, fname))
-random.shuffle(fnames)
-fnames_train = fnames[1400:]
-fnames_test = fnames[:1400]
+    cap = 280
+    for j, fname in enumerate(glob.glob('chars/{}/*.jpg'.format(chr(ord('a') + i)))):
+        if j < cap:
+            fnames_train.append((i, fname))
+        else:
+            fnames_test.append((i, fname))
 
 def read_img(path):
     img = cv2.imread(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, gaus = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    cv2.imwrite('out/{}'.format(path.split('/')[-1]), gaus)
     return gaus
 
 sift = cv2.SIFT()
-BOW = cv2.BOWKMeansTrainer(26)
+BOW = cv2.BOWKMeansTrainer(2000)
 for (i, fname) in fnames_train:
     gray = read_img(fname)
     kp, des = sift.detectAndCompute(gray, None)
