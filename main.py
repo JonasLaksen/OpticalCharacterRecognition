@@ -51,14 +51,18 @@ for (i, fname) in fnames_train:
 svm = cv2.SVM()
 svm.train(np.array(train_desc), np.array(train_labels))
 knn = cv2.KNearest(np.array(train_desc), np.array(train_labels))
+nb = cv2.NormalBayesClassifier()
+nb.train(np.array(train_desc), np.array(train_labels))
 correct = 0
 wrong = 0
 knn_correct = 0
 knn_wrong = 0
+nbcorrect = 0
+nbwrong = 0
 for (i,fname) in fnames_test:
     desc = feature_extract(fname)
     if desc != None:
-        p, _, _, _ = knn.find_nearest(desc, 5)
+        p, results, neighborResponses, dists = knn.find_nearest(desc, 15)
         if p == i:
             knn_correct += 1
         else:
@@ -68,8 +72,15 @@ for (i,fname) in fnames_test:
             correct += 1
         else:
             wrong += 1
+        d = nb.predict(desc)
+        if d == i:
+            nbcorrect += 1
+        else:
+            nbwrong += 1
 
 print 'Correct {}'.format(correct)
 print 'Wrong {}'.format(wrong)
 print 'KNNCorrect {}'.format(knn_correct)
 print 'KNNWrong {}'.format(knn_wrong)
+print 'NBCorrect {}'.format(nbcorrect)
+print 'NBWrong {}'.format(nbwrong)
