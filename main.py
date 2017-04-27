@@ -1,86 +1,68 @@
-import numpy as np
 import cv2
+from sklearn.decomposition import PCA
+import random
 import glob
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
 
-fnames_train = []
-fnames_test = []
-for i in range(26):
-    cap = 280
-    for j, fname in enumerate(glob.glob('chars/{}/*.jpg'.format(chr(ord('a') + i)))):
-        if j < cap:
-            fnames_train.append((i, fname))
-        else:
-            fnames_test.append((i, fname))
+fnames = [(i, fname) for i in range(26) for fname in glob.glob('chars/{}/*.jpg'.format(chr(ord('a') + i)))]
+random.shuffle(fnames)
+fnames_train = fnames[int(len(fnames) * 1.0 / 5.0):]
+fnames_test = fnames[: int(len(fnames) * 1.0 / 5.0)]
 
 def read_img(path):
-    img = cv2.imread(path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, gaus = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    cv2.imwrite('out/{}'.format(path.split('/')[-1]), gaus)
-    return gaus
+    gray = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.adaptiveThreshold(gray, 1, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 0)
+    return gray
 
-sift = cv2.SIFT()
-BOW = cv2.BOWKMeansTrainer(2000)
-for (i, fname) in fnames_train:
-    gray = read_img(fname)
-    kp, des = sift.detectAndCompute(gray, None)
-    if len(kp) > 0:
-        BOW.add(des)
-    else:
-        fnames_train.remove((i, fname))
+pca = PCA(n_components=30)
+X_train, y_train = [read_img(fname).flatten() for (_, fname) in fnames_train], [i for (i, _) in fnames_train]
+X_test, y_test = [read_img(fname).flatten() for (_, fname) in fnames_test], [i for (i, _) in fnames_test]
+pca.fit(X_train)
+X_train = pca.transform(X_train)
+X_test = pca.transform(X_test)
+clf = KNeighborsClassifier(n_neighbors=7, weights='distance', algorithm='brute')
+clf.fit(X_train, y_train)
+print 'K Nearest Neighbor accuracy: {}'.format(clf.score(X_test, y_test))
+svm = SVC(C=4,probability=True)
+svm.fit(X_train,y_train)
+print 'SVM accuracy: {}'.format(svm.score(X_test, y_test))
+print len(X_test)
 
-dictionary = BOW.cluster()
 
-desc_ext = cv2.DescriptorExtractor_create("SIFT")
-bow_img_ext = cv2.BOWImgDescriptorExtractor(desc_ext, cv2.BFMatcher(cv2.NORM_L2))
-bow_img_ext.setVocabulary(dictionary)
+# Find the best squares when multiple squares are overlapping
+def post_process(L, i):
+    if i == 0:
+        return L
+    first = L[0]
+    in_same_region = filter(
+        lambda x: x[0] < first[0] + 20 and x[0] > first[0] - 20 and x[1] < first[1] + 20 and x[1] > first[1] - 20, L)[
+                     :2]
+    without = [x for x in L if x not in in_same_region]
+    maxx = (0, None)
+    for x in in_same_region:
+        if x[2] > maxx[0]:
+            maxx = (x[2], x)
+    without.append(maxx[1])
+    return post_process(without, i - 1)
 
-def feature_extract(path):
-    gray = read_img(path)
-    return bow_img_ext.compute(gray, sift.detect(gray))
 
-train_desc = []
-train_labels = []
+def detect(path, p_threshold=0.6, step_size=5):
+    det_img = read_img(path)
+    (height, width) = det_img.shape
+    squares = [(y, x, det_img[y:y + 20, x:x + 20].flatten()) for y in range(0, height, step_size) for x in
+               range(0, width, step_size) if y <= height - 20 and x <= width - 20]
+    max_probabilities = filter(lambda x: x[2] >= p_threshold,
+                               map(lambda x: (x[0][0], x[0][1], max(x[1])),
+                                   zip(squares, svm.predict_proba(
+                                       pca.transform(map( lambda x: x[ 2], squares))))))
 
-for (i, fname) in fnames_train:
-    desc = feature_extract(fname)
-    if desc != None:
-        train_desc.extend(desc)
-        train_labels.append(i)
+    ok = post_process(max_probabilities, len(max_probabilities))
+    im = cv2.imread(path)
+    for (x, y, _) in ok:
+        cv2.rectangle(im, (y, x), (y + 20, x + 20), (0, 255, 0), 2)
+    cv2.imwrite('out/{}'.format(path.split('/')[-1]), im)
 
-svm = cv2.SVM()
-svm.train(np.array(train_desc), np.array(train_labels))
-knn = cv2.KNearest(np.array(train_desc), np.array(train_labels))
-nb = cv2.NormalBayesClassifier()
-nb.train(np.array(train_desc), np.array(train_labels))
-correct = 0
-wrong = 0
-knn_correct = 0
-knn_wrong = 0
-nbcorrect = 0
-nbwrong = 0
-for (i,fname) in fnames_test:
-    desc = feature_extract(fname)
-    if desc != None:
-        p, results, neighborResponses, dists = knn.find_nearest(desc, 15)
-        if p == i:
-            knn_correct += 1
-        else:
-            knn_wrong += 1
-        c = svm.predict(desc)
-        if c == i:
-            correct += 1
-        else:
-            wrong += 1
-        d = nb.predict(desc)
-        if d == i:
-            nbcorrect += 1
-        else:
-            nbwrong += 1
-
-print 'Correct {}'.format(correct)
-print 'Wrong {}'.format(wrong)
-print 'KNNCorrect {}'.format(knn_correct)
-print 'KNNWrong {}'.format(knn_wrong)
-print 'NBCorrect {}'.format(nbcorrect)
-print 'NBWrong {}'.format(nbwrong)
+for fname in glob.glob('detection-images/*.jpg'):
+    detect(fname)
